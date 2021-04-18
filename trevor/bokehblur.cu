@@ -12,19 +12,19 @@ const int NUM_SAMPLES = 128;
 
 struct Pixel
 {
-    int r, g, b, a;
+    float r, g, b, a;
 
     __host__ __device__ Pixel()
     {
         r, g, b, a = 0;
     }
 
-    __host__ __device__ Pixel(unsigned char cr, unsigned char cg, unsigned char cb, unsigned char ca)
+    __host__ __device__ Pixel(float fr, float fg, float fb, float fa)
     {
-        r = cr;
-        g = cg;
-        b = cb;
-        a = ca;
+        r = fr;
+        g = fg;
+        b = fb;
+        a = fa;
     }
 
     __host__ __device__ Pixel operator+(Pixel p)
@@ -58,7 +58,7 @@ struct Pixel
     }
 };
 
-__global__ void createCocMap(Pixel colorMap[], int depthMap[], float output[], int numPixels)
+__global__ void createCocMap(Pixel colorMap[], float depthMap[], float output[], int numPixels)
 {
     //Copy maps to shared memory
     __shared__ Pixel ds_ColorMap[TILE_WIDTH][TILE_WIDTH];
@@ -78,13 +78,14 @@ __global__ void createCocMap(Pixel colorMap[], int depthMap[], float output[], i
     __syncthreads();
 
     //Calculate blur factor
-    float aperture = 0.15;
+    float aperture = 0.5906;
     float focalLength = 0.0886;
     float focalDistance = 40;
     float farClippingPlane = 150;
     float maxDiameter = 50;
 
-    float realDepth = ((float)ds_DepthMap[threadIdx.y][threadIdx.x] / 255.0f) * farClippingPlane;
+    //float realDepth = ((float)ds_DepthMap[threadIdx.y][threadIdx.x] / 255.0f) * farClippingPlane;
+    float realDepth = ds_DepthMap[threadIdx.y][threadIdx.x];
     float circleDiameter = aperture * (fabsf(realDepth - focalDistance) / realDepth) * (focalLength / (focalDistance - focalLength));
     float sensorHeight = 0.024f;
     float percentOfSensor = circleDiameter / sensorHeight;
@@ -130,7 +131,7 @@ float* makeOffsets(float angle, float width, float height)
 {
     float* output = new float[NUM_SAMPLES * 2];
 
-    float radius = 5000.0f;
+    float radius = 960.0f;
 
     float radians = angle * 3.14159f / 180.0f;
 
@@ -147,7 +148,7 @@ float* makeOffsets(float angle, float width, float height)
     return output;
 }
 
-__global__ void depthOfField(Pixel colorMap[], int depthMap[], float cocMap[], float offsetData[], Pixel outputMap[], int numPixels, int width, int height)
+__global__ void depthOfField(Pixel colorMap[], float depthMap[], float cocMap[], float offsetData[], Pixel outputMap[], int numPixels, int width, int height)
 {
     int column = blockIdx.x * TILE_WIDTH + threadIdx.x;
     int row = blockIdx.y * TILE_WIDTH + threadIdx.y;
@@ -242,34 +243,38 @@ __global__ void finalPass(Pixel colorMapA[], Pixel colorMapB[], Pixel outputMap[
 int main()
 {
     int x, y, n;
-    unsigned char* colorData = stbi_load("input_color.png", &x, &y, &n, 0);
-    unsigned char* depthData = stbi_load("input_depth.png", &x, &y, &n, 0);
+    //int test = stbi_is_hdr("input_color.hdr");
+    //printf("%i", test);
+    float* colorData = stbi_loadf("input_color.hdr", &x, &y, &n, 0);
+    float* depthData = stbi_loadf("input_depth.hdr", &x, &y, &n, 0);
     const int numPixels = x * y;
 
     Pixel* h_Color = new Pixel[numPixels];
-    int* h_Depth = new int[numPixels];
+    float* h_Depth = new float[numPixels];
     float* h_OffsetA = new float[NUM_SAMPLES * 2];
     float* h_OffsetB = new float[NUM_SAMPLES * 2];
     float* h_OffsetC = new float[NUM_SAMPLES * 2];
     Pixel* h_Output = new Pixel[numPixels];
 
     size_t colorSize = sizeof(Pixel) * numPixels;
-    size_t depthSize = sizeof(int) * numPixels;
+    size_t depthSize = sizeof(float) * numPixels;
     size_t cocSize = sizeof(float) * numPixels;
     size_t offsetSize = sizeof(float) * NUM_SAMPLES * 2;
 
     if (colorData != NULL)
     {
-        printf("Width: %i\nHeight: %i\n", x, y);
+        printf("Width: %i\nHeight: %i\nN: %i\n", x, y, n);
 
-        for (int i = 0; i < numPixels * 4; i += 4)
+        for (int i = 0; i < numPixels * 3; i += 3)
         {
-            Pixel pixel = Pixel(colorData[i], colorData[i + 1], colorData[i + 2], colorData[i + 3]);
-            h_Color[i / 4] = pixel;
+            Pixel pixel = Pixel(colorData[i], colorData[i + 1], colorData[i + 2], 1.0f);
+            h_Color[i / 3] = pixel;
+            //printf("%f %f %f\n", colorData[i], colorData[i + 1], colorData[i + 2]);
         }
-        for (int i = 0; i < numPixels * 4; i += 4)
+        for (int i = 0; i < numPixels * 3; i += 3)
         {
-            h_Depth[i / 4] = depthData[i];
+            h_Depth[i / 3] = depthData[i];
+            //printf("%f\n", depthData[i]);
         }
 
         h_OffsetA = makeOffsets(0, x, y);
@@ -277,7 +282,7 @@ int main()
         h_OffsetC = makeOffsets(-45, x, y);
 
         Pixel* d_Color;
-        int* d_Depth;
+        float* d_Depth;
         float* d_Coc;
         float* d_OffsetA;
         float* d_OffsetB;
@@ -304,7 +309,6 @@ int main()
         cudaMemcpy(d_Depth, h_Depth, depthSize, cudaMemcpyHostToDevice);
         createCocMap<<<dimGrid, dimBlock>>>(d_Color, d_Depth, d_Coc, numPixels);
 
-
         cudaMemcpy(d_OffsetA, h_OffsetA, offsetSize, cudaMemcpyHostToDevice);
         depthOfField<<<dimGrid, dimBlock>>>(d_Color, d_Depth, d_Coc, d_OffsetA, d_ColorA, numPixels, x, y);
         cudaMemcpy(d_OffsetB, h_OffsetB, offsetSize, cudaMemcpyHostToDevice);
@@ -320,6 +324,8 @@ int main()
         finalPass<<<dimGrid, dimBlock>>>(d_OutputA, d_OutputB, d_Final, numPixels, false);
         cudaMemcpy(h_Output, d_Final, colorSize, cudaMemcpyDeviceToHost);
 
+        //cudaMemcpy(h_Output, d_ColorA, colorSize, cudaMemcpyDeviceToHost);
+
         cudaFree(d_Color);
         cudaFree(d_Depth);
         cudaFree(d_Coc);
@@ -328,18 +334,18 @@ int main()
         cudaFree(d_ColorA);
         cudaFree(d_ColorB);
         cudaFree(d_OutputA);
-        cudaFree(d_OutputA);
+        cudaFree(d_OutputB);
 
-        unsigned char* outputData = new unsigned char[numPixels * 4];
+        float* outputData = new float[numPixels * 3];
         for (int i = 0; i < numPixels; i++)
         {
-            outputData[i * 4] = h_Output[i].r;
-            outputData[i * 4 + 1] = h_Output[i].g;
-            outputData[i * 4 + 2] = h_Output[i].b;
-            outputData[i * 4 + 3] = h_Output[i].a;
+            outputData[i * 3] = h_Output[i].r;
+            outputData[i * 3 + 1] = h_Output[i].g;
+            outputData[i * 3 + 2] = h_Output[i].b;
+            //outputData[i * 4 + 3] = 1.0f;
         }
 
-        stbi_write_png("output.png", x, y, 4, outputData, sizeof(unsigned char) * x * 4);
+        stbi_write_hdr("output.hdr", x, y, 3, outputData);
     }
 
     return 0;
