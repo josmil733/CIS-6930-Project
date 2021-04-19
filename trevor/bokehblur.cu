@@ -229,10 +229,6 @@ __global__ void finalPass(Pixel colorMapA[], Pixel colorMapB[], Pixel outputMap[
             pixelO.g = fmin((float)pixelA.g, (float)pixelB.g);
             pixelO.b = fmin((float)pixelA.b, (float)pixelB.b);
             pixelO.a = fmin((float)pixelA.a, (float)pixelB.a);
-            //pixelO.r = ((float)pixelA.r + (float)pixelB.r) / 2.0f;
-            //pixelO.g = ((float)pixelA.g + (float)pixelB.g) / 2.0f;
-            //pixelO.b = ((float)pixelA.b + (float)pixelB.b) / 2.0f;
-            //pixelO.a = ((float)pixelA.a + (float)pixelB.a) / 2.0f;
         }        
         ds_Output[threadIdx.y][threadIdx.x] = pixelO;
 
@@ -254,6 +250,7 @@ int main()
     float* h_OffsetA = new float[NUM_SAMPLES * 2];
     float* h_OffsetB = new float[NUM_SAMPLES * 2];
     float* h_OffsetC = new float[NUM_SAMPLES * 2];
+    float* h_OffsetD = new float[NUM_SAMPLES * 2];
     Pixel* h_Output = new Pixel[numPixels];
 
     size_t colorSize = sizeof(Pixel) * numPixels;
@@ -278,8 +275,9 @@ int main()
         }
 
         h_OffsetA = makeOffsets(0, x, y);
-        h_OffsetB = makeOffsets(45, x, y);
-        h_OffsetC = makeOffsets(-45, x, y);
+        h_OffsetB = makeOffsets(90, x, y);
+        h_OffsetC = makeOffsets(45, x, y);
+        h_OffsetD = makeOffsets(315, x, y);
 
         Pixel* d_Color;
         float* d_Depth;
@@ -312,19 +310,19 @@ int main()
         cudaMemcpy(d_OffsetA, h_OffsetA, offsetSize, cudaMemcpyHostToDevice);
         depthOfField<<<dimGrid, dimBlock>>>(d_Color, d_Depth, d_Coc, d_OffsetA, d_ColorA, numPixels, x, y);
         cudaMemcpy(d_OffsetB, h_OffsetB, offsetSize, cudaMemcpyHostToDevice);
-        depthOfField<<<dimGrid, dimBlock>>>(d_Color, d_Depth, d_Coc, d_OffsetB, d_ColorB, numPixels, x, y);
-        finalPass<<<dimGrid, dimBlock>>>(d_ColorA, d_ColorB, d_OutputA, numPixels, false);
+        depthOfField<<<dimGrid, dimBlock>>>(d_ColorA, d_Depth, d_Coc, d_OffsetB, d_OutputA, numPixels, x, y);
+        //finalPass<<<dimGrid, dimBlock>>>(d_ColorA, d_ColorB, d_OutputA, numPixels, false);
 
-        cudaMemcpy(d_OffsetA, h_OffsetA, offsetSize, cudaMemcpyHostToDevice);
+        cudaMemcpy(d_OffsetA, h_OffsetC, offsetSize, cudaMemcpyHostToDevice);
         depthOfField<<<dimGrid, dimBlock>>>(d_Color, d_Depth, d_Coc, d_OffsetA, d_ColorA, numPixels, x, y);
-        cudaMemcpy(d_OffsetB, h_OffsetC, offsetSize, cudaMemcpyHostToDevice);
-        depthOfField<<<dimGrid, dimBlock>>>(d_Color, d_Depth, d_Coc, d_OffsetB, d_ColorB, numPixels, x, y);
-        finalPass<<<dimGrid, dimBlock>>>(d_ColorA, d_ColorB, d_OutputB, numPixels, false);
+        cudaMemcpy(d_OffsetB, h_OffsetD, offsetSize, cudaMemcpyHostToDevice);
+        depthOfField<<<dimGrid, dimBlock>>>(d_ColorA, d_Depth, d_Coc, d_OffsetB, d_OutputB, numPixels, x, y);
+        //finalPass<<<dimGrid, dimBlock>>>(d_ColorA, d_ColorB, d_OutputB, numPixels, false);
 
         finalPass<<<dimGrid, dimBlock>>>(d_OutputA, d_OutputB, d_Final, numPixels, false);
         cudaMemcpy(h_Output, d_Final, colorSize, cudaMemcpyDeviceToHost);
 
-        //cudaMemcpy(h_Output, d_ColorA, colorSize, cudaMemcpyDeviceToHost);
+        cudaMemcpy(h_Output, d_OutputA, colorSize, cudaMemcpyDeviceToHost);
 
         cudaFree(d_Color);
         cudaFree(d_Depth);
