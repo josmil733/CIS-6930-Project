@@ -1,7 +1,5 @@
-void calculateBlur(float *caPtr, float image_Original[4*x*y]){
-
-    // float CoC[x*y]: circle of confusion diameters. x = # rows of pixels; y = # columns of pixels
-    // float alpha[x*y]: alpha weights for each pixel in the input image
+void calculateBlur(float *caPtr, float image_Original[4*x*y], int x, int y)
+{
     // float image_Original [4*x*y]: the RGB values from the input image
     
     float dist = 0; //distance between q and p
