@@ -110,7 +110,7 @@ void calculateBlur(float *caPtr, unsigned char* image_Original, int *xPtr1, int 
                 {
                 if(dist < *(caPtr+p/4))
                 {
-                    printf("%d\n", *(circle_set+p));
+                  //  printf("%d\n", *(circle_set+p));
                     *(circle_set+p) = 1;
 
                  //   printf("Diamerter of pixel %d is: %f, and %d index of circle_set is now set to 1\n", p, *(caPtr+p-2), *(circle_set+p));
@@ -118,22 +118,23 @@ void calculateBlur(float *caPtr, unsigned char* image_Original, int *xPtr1, int 
                  //   *(circle_set+p+2) = 0;
                  //   *(circle_set+p+3) = 0;
                 }
-                else
-                {
-                   printf("%d\n", *(circle_set+p));
-                   *(circle_set+p) = 0;
+         //       else
+           //     {
+                 //  printf("%d\n", *(circle_set+p));
+               //    *(circle_set+p) = 0;
 
                  //  printf("Diamerter of pixel %d is: %f, and %d index of circle_set is now set to 0\n", p, *(caPtr+p-2), *(circle_set+p));
                  //  *(circle_set+p+1) = 0;
                  //   *(circle_set+p+2) = 0;
                  //   *(circle_set+p+3) = 0;
-                }
+             //   }
                 }
                 else
                 { 
-                 if(dist < *(caPtr+(p/4) + 1))
+                // if(dist < *(caPtr+(p/4) + 1))
+                 if(dist < *(caPtr+(p/4)))
                  {
-                    printf("%d\n", *(circle_set+p));
+                 //   printf("%d\n", *(circle_set+p));
                     *(circle_set+p) = 1;
 
                   //  printf("Diamerter of pixel %d is: %f, and %d index of circle_set is now set to 1\n", p, *(caPtr+p-2), *(circle_set+p));
@@ -141,16 +142,16 @@ void calculateBlur(float *caPtr, unsigned char* image_Original, int *xPtr1, int 
                  //   *(circle_set+p+2) = 0;
                  //   *(circle_set+p+3) = 0;
                  }
-                 else
-                 {
-                   printf("%d\n", *(circle_set+p));
-                   *(circle_set+p) = 0;
+                // else
+               //  {
+               //    printf("%d\n", *(circle_set+p));
+                 //  *(circle_set+p) = 0;
 
                 //   printf("Diamerter of pixel %d is: %f, and %d index of circle_set is now set to 0\n", p, *(caPtr+p-2), *(circle_set+p));
                  //  *(circle_set+p+1) = 0;
                  //   *(circle_set+p+2) = 0;
                  //   *(circle_set+p+3) = 0;
-                 }
+               //  }
 
                 }
             }
@@ -162,6 +163,8 @@ void calculateBlur(float *caPtr, unsigned char* image_Original, int *xPtr1, int 
         float omega_alpha = 0; //same thing that's defined in equation 23
         for(int p=0; p < (4 * (*xPtr1) * (*yPtr1)); p += 4 )
         {
+            if(caPtr != NULL)
+            {
             if(p==0)
             {
                 if(circle_set[p] == 1)
@@ -171,10 +174,22 @@ void calculateBlur(float *caPtr, unsigned char* image_Original, int *xPtr1, int 
             }
             else
             {
-                if(circle_set[p] == 1)
-                {   
-                    omega_alpha += *(caPtr+p-1);
+                if((p/4)%2 == 0)
+                {
+                 if(circle_set[p] == 1)
+                 {   
+                    // omega_alpha += *(caPtr+p-1);
+                    omega_alpha += *(caPtr+(p/4)+1);
+                 }
                 }
+                else
+                {
+                 if(circle_set[p] == 1)
+                 {
+                   omega_alpha += *(caPtr+(p/4)+1);
+                 }
+                }   
+            }
             }
         }
 
