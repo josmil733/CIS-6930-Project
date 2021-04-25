@@ -7,6 +7,8 @@
 #define STB_IMAGE_WRITE_IMPLEMENTATION
 #include "stb_image_write.h"
 
+#include <chrono>
+
 const int TILE_WIDTH = 32;
 const int NUM_SAMPLES = 128;
 
@@ -58,60 +60,6 @@ struct Pixel
     }
 };
 
-__global__ void createCocMap(Pixel colorMap[], float depthMap[], float output[], int numPixels)
-{
-    //Copy maps to shared memory
-    __shared__ Pixel ds_ColorMap[TILE_WIDTH][TILE_WIDTH];
-    __shared__ int ds_DepthMap[TILE_WIDTH][TILE_WIDTH];
-
-    int column = blockIdx.x * TILE_WIDTH + threadIdx.x;
-    int row = blockIdx.y * TILE_WIDTH + threadIdx.y;
-    int width = gridDim.x * TILE_WIDTH;
-    int index = row * width + column;
-
-    if (index < numPixels)
-    {
-        ds_ColorMap[threadIdx.y][threadIdx.x] = colorMap[index];
-        ds_DepthMap[threadIdx.y][threadIdx.x] = depthMap[index];
-    }
-
-    __syncthreads();
-
-    //Calculate blur factor
-    float aperture = 0.5906;
-    float focalLength = 0.0886;
-    float focalDistance = 40;
-    float farClippingPlane = 150;
-    float maxDiameter = 50;
-
-    //float realDepth = ((float)ds_DepthMap[threadIdx.y][threadIdx.x] / 255.0f) * farClippingPlane;
-    float realDepth = ds_DepthMap[threadIdx.y][threadIdx.x];
-    float circleDiameter = aperture * (fabsf(realDepth - focalDistance) / realDepth) * (focalLength / (focalDistance - focalLength));
-    float sensorHeight = 0.024f;
-    float percentOfSensor = circleDiameter / sensorHeight;
-    float blurFactor = percentOfSensor;
-    if (blurFactor < 0.0f)
-    {
-        blurFactor = 0;
-    }
-    else if (blurFactor > maxDiameter)
-    {
-        blurFactor = maxDiameter;
-    }
-
-    //Assign blur to alpha of color map
-    //Pixel blurPixel = ds_ColorMap[threadIdx.y][threadIdx.x];
-    //blurPixel.a = blurFactor * 255;
-    //ds_ColorMap[threadIdx.y][threadIdx.x] = blurPixel;
-
-    //Output color map
-    if (index < numPixels)
-    {
-        //outputColor[index] = ds_ColorMap[threadIdx.y][threadIdx.x];
-        output[index] = blurFactor;
-    }
-}
-
 __host__ __device__ Pixel lerp(Pixel p1, Pixel p2, float t)
 {
     Pixel output;
@@ -148,6 +96,46 @@ float* makeOffsets(float angle, float width, float height)
     return output;
 }
 
+__global__ void createCocMap(Pixel colorMap[], float depthMap[], float output[], int numPixels)
+{
+    __shared__ Pixel ds_ColorMap[TILE_WIDTH][TILE_WIDTH];
+    __shared__ int ds_DepthMap[TILE_WIDTH][TILE_WIDTH];
+
+    int column = blockIdx.x * TILE_WIDTH + threadIdx.x;
+    int row = blockIdx.y * TILE_WIDTH + threadIdx.y;
+    int width = gridDim.x * TILE_WIDTH;
+    int index = row * width + column;
+
+    if (index < numPixels)
+    {
+        ds_ColorMap[threadIdx.y][threadIdx.x] = colorMap[index];
+        ds_DepthMap[threadIdx.y][threadIdx.x] = depthMap[index];
+
+        __syncthreads();
+
+        float aperture = 0.5906;
+        float focalLength = 0.0886;
+        float focalDistance = 40;
+        float maxDiameter = 50;
+
+        float realDepth = ds_DepthMap[threadIdx.y][threadIdx.x];
+        float circleDiameter = aperture * (fabsf(realDepth - focalDistance) / realDepth) * (focalLength / (focalDistance - focalLength));
+        float sensorHeight = 0.024f;
+        float percentOfSensor = circleDiameter / sensorHeight;
+        float blurFactor = percentOfSensor;
+        if (blurFactor < 0.0f)
+        {
+            blurFactor = 0;
+        }
+        else if (blurFactor > maxDiameter)
+        {
+            blurFactor = maxDiameter;
+        }
+
+        output[index] = blurFactor;
+    }
+}
+
 __global__ void depthOfField(Pixel colorMap[], float depthMap[], float cocMap[], float offsetData[], Pixel outputMap[], int numPixels, int width, int height)
 {
     int column = blockIdx.x * TILE_WIDTH + threadIdx.x;
@@ -168,17 +156,9 @@ __global__ void depthOfField(Pixel colorMap[], float depthMap[], float cocMap[],
 
         for (int i = 0; i < NUM_SAMPLES * 2; i += 2)
         {
-            //int minIndex = fmax(fmin(floor(row + offsetData[i + 1]) * width + floor(column + offsetData[i]), (float)numPixels - 1), 0.0f);
-            //int maxIndex = fmax(fmin(ceil(row + offsetData[i + 1]) * width + ceil(column + offsetData[i]), (float)numPixels - 1), 0.0f);
-
-            //Pixel samplePixel = lerp(colorMap[minIndex], colorMap[maxIndex], 0.5f);
-            //int sampleDepth = lerp(depthMap[minIndex], depthMap[maxIndex], 0.5f);
-            //float sampleCoc = lerp(cocMap[minIndex], cocMap[maxIndex], 0.5f);
-
             float y = row + offsetData[i + 1] * centerCoc;
             float x = column + offsetData[i] * centerCoc;
             int sampleIndex = floor(fmax(fmin(y, (float)height), 0.0f)) * width + floor(fmax(fmin(x, (float)width), 0.0f));
-            //sampleIndex = fmax(fmin((float)sampleIndex, (float)numPixels), 0.0f);
 
             Pixel samplePixel = colorMap[sampleIndex];
             int sampleDepth = depthMap[sampleIndex];
@@ -239,8 +219,6 @@ __global__ void finalPass(Pixel colorMapA[], Pixel colorMapB[], Pixel outputMap[
 int main()
 {
     int x, y, n;
-    //int test = stbi_is_hdr("input_color.hdr");
-    //printf("%i", test);
     float* colorData = stbi_loadf("input_color.hdr", &x, &y, &n, 0);
     float* depthData = stbi_loadf("input_depth.hdr", &x, &y, &n, 0);
     const int numPixels = x * y;
@@ -266,12 +244,10 @@ int main()
         {
             Pixel pixel = Pixel(colorData[i], colorData[i + 1], colorData[i + 2], 1.0f);
             h_Color[i / 3] = pixel;
-            //printf("%f %f %f\n", colorData[i], colorData[i + 1], colorData[i + 2]);
         }
         for (int i = 0; i < numPixels * 3; i += 3)
         {
             h_Depth[i / 3] = depthData[i];
-            //printf("%f\n", depthData[i]);
         }
 
         h_OffsetA = makeOffsets(0, x, y);
@@ -285,7 +261,6 @@ int main()
         float* d_OffsetA;
         float* d_OffsetB;
         Pixel* d_ColorA;
-        Pixel* d_ColorB;
         Pixel* d_OutputA;
         Pixel* d_OutputB;
         Pixel* d_Final;
@@ -296,13 +271,15 @@ int main()
         cudaMalloc((void**)&d_OffsetA, offsetSize);
         cudaMalloc((void**)&d_OffsetB, offsetSize);
         cudaMalloc((void**)&d_ColorA, colorSize);
-        cudaMalloc((void**)&d_ColorB, colorSize);
         cudaMalloc((void**)&d_OutputA, colorSize);
         cudaMalloc((void**)&d_OutputB, colorSize);
         cudaMalloc((void**)&d_Final, colorSize);
 
         dim3 dimGrid(ceil((float)x / (float)TILE_WIDTH), ceil((float)y / (float)TILE_WIDTH), 1);
         dim3 dimBlock(TILE_WIDTH, TILE_WIDTH, 1);
+
+        auto t1 = std::chrono::high_resolution_clock::now();
+
         cudaMemcpy(d_Color, h_Color, colorSize, cudaMemcpyHostToDevice);
         cudaMemcpy(d_Depth, h_Depth, depthSize, cudaMemcpyHostToDevice);
         createCocMap<<<dimGrid, dimBlock>>>(d_Color, d_Depth, d_Coc, numPixels);
@@ -311,18 +288,19 @@ int main()
         depthOfField<<<dimGrid, dimBlock>>>(d_Color, d_Depth, d_Coc, d_OffsetA, d_ColorA, numPixels, x, y);
         cudaMemcpy(d_OffsetB, h_OffsetB, offsetSize, cudaMemcpyHostToDevice);
         depthOfField<<<dimGrid, dimBlock>>>(d_ColorA, d_Depth, d_Coc, d_OffsetB, d_OutputA, numPixels, x, y);
-        //finalPass<<<dimGrid, dimBlock>>>(d_ColorA, d_ColorB, d_OutputA, numPixels, false);
 
         cudaMemcpy(d_OffsetA, h_OffsetC, offsetSize, cudaMemcpyHostToDevice);
         depthOfField<<<dimGrid, dimBlock>>>(d_Color, d_Depth, d_Coc, d_OffsetA, d_ColorA, numPixels, x, y);
         cudaMemcpy(d_OffsetB, h_OffsetD, offsetSize, cudaMemcpyHostToDevice);
         depthOfField<<<dimGrid, dimBlock>>>(d_ColorA, d_Depth, d_Coc, d_OffsetB, d_OutputB, numPixels, x, y);
-        //finalPass<<<dimGrid, dimBlock>>>(d_ColorA, d_ColorB, d_OutputB, numPixels, false);
 
         finalPass<<<dimGrid, dimBlock>>>(d_OutputA, d_OutputB, d_Final, numPixels, false);
         cudaMemcpy(h_Output, d_Final, colorSize, cudaMemcpyDeviceToHost);
 
-        cudaMemcpy(h_Output, d_OutputA, colorSize, cudaMemcpyDeviceToHost);
+        auto t2 = std::chrono::high_resolution_clock::now();
+        std::chrono::duration<double, std::milli> ms_double = t2 - t1;
+
+        printf("%fms\n", ms_double.count());
 
         cudaFree(d_Color);
         cudaFree(d_Depth);
@@ -330,7 +308,6 @@ int main()
         cudaFree(d_OffsetA);
         cudaFree(d_OffsetB);
         cudaFree(d_ColorA);
-        cudaFree(d_ColorB);
         cudaFree(d_OutputA);
         cudaFree(d_OutputB);
 
@@ -340,7 +317,6 @@ int main()
             outputData[i * 3] = h_Output[i].r;
             outputData[i * 3 + 1] = h_Output[i].g;
             outputData[i * 3 + 2] = h_Output[i].b;
-            //outputData[i * 4 + 3] = 1.0f;
         }
 
         stbi_write_hdr("output.hdr", x, y, 3, outputData);
